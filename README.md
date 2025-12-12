@@ -1,117 +1,101 @@
+import sqlite3
+import os
+from pathlib import Path
+import time
+
 # --- Настройки ---
-BASE_URL = "https://jsonplaceholder.typicode.com" 
-MAX_RETRIES = 3  # Максимальное количество повторных попыток
-RETRY_BACKOFF = 1.0 # Время ожидания между повторами (в секундах)
+DB_FILE = Path("app_data.db")
+TABLE_NAME = "tasks"
 
-# --- 1. Создание отказоустойчивой сессии (Session) ---
-
-def create_resilient_session():
-    """
-    Создает объект requests.Session с логикой повторных попыток (Retry Logic).
-    Это обеспечивает, что при временных ошибках (500, 502 и т.д.) клиент
-    автоматически попытается выполнить запрос снова.
-    """
-    # 
-    
-    # Определяем, какие статусы HTTP должны вызывать повторную попытку
-    retry_statuses = [500, 502, 503, 504]
-    
-    retry_strategy = Retry(
-        total=MAX_RETRIES,  # Общее количество попыток
-        backoff_factor=RETRY_BACKOFF, # Фактор экспоненциальной задержки
-        status_forcelist=retry_statuses, # Статусы, при которых нужно повторять
-        method_whitelist=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE"] # Методы для повтора
-    )
-    
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session = requests.Session()
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    
-    return session
-
-# --- 2. Универсальная функция запроса ---
-
-def make_request(session, method, endpoint, headers=None, data=None):
-    """
-    Универсальная функция для выполнения HTTP-запросов (GET, POST, PUT, DELETE).
-    """
-    url = f"{BASE_URL}/{endpoint}"
-    
-    print(f"\n-> 🛠️ {method} Запрос к: {url}")
-    
+def create_connection(db_file):
+    """Создает соединение с базой данных SQLite."""
+    conn = None
     try:
-        # Выполнение запроса с использованием объекта Session
-        response = session.request(
-            method,
-            url,
-            json=data,          # Автоматическая сериализация для POST/PUT
-            headers=headers,    # Пользовательские заголовки
-            timeout=10          # Общий таймаут запроса
-        )
-        response.raise_for_status() # Вызывает исключение для ошибок 4xx/5xx
-        
-        # Обработка ответа
-        if response.status_code == 204: # No Content (типично для DELETE)
-            return {"status": "Success (No Content)"}
-            
-        return response.json()
+        # 
+        conn = sqlite3.connect(db_file)
+        print(f"✅ Успешное подключение к базе данных: {db_file}")
+        return conn
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка подключения к SQLite: {e}")
+        return None
 
-    except requests.exceptions.HTTPError as e:
-        print(f"❌ HTTP Ошибка (Код {e.response.status_code}): {e}")
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Сетевая Ошибка/Таймаут: {e}")
-        
-    return None
+def create_table(conn):
+    """Создает таблицу задач, если она не существует."""
+    
+    # SQL-запрос для создания таблицы
+    sql_create_tasks_table = f""" CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
+                                    id INTEGER PRIMARY KEY,
+                                    name TEXT NOT NULL,
+                                    priority INTEGER,
+                                    status TEXT,
+                                    start_date TEXT
+                                ); """
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql_create_tasks_table)
+        conn.commit()
+        print(f"✅ Таблица '{TABLE_NAME}' готова.")
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при создании таблицы: {e}")
+
+def insert_task(conn, task):
+    """Вставляет новую задачу в таблицу."""
+    sql = f''' INSERT INTO {TABLE_NAME}(name, priority, status, start_date)
+              VALUES(?, ?, ?, ?) '''
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql, task)
+        conn.commit()
+        return cursor.lastrowid # Возвращает ID вставленной строки
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при вставке данных: {e}")
+        return None
+
+def select_all_tasks(conn):
+    """Выбирает все строки из таблицы задач."""
+    sql = f'SELECT * FROM {TABLE_NAME}'
+    cursor = conn.cursor()
+    cursor.execute(sql)
+    # fetchall() возвращает список кортежей
+    rows = cursor.fetchall()
+    return rows
+
+def update_task_status(conn, task_id, new_status):
+    """Обновляет статус задачи по ID."""
+    sql = f''' UPDATE {TABLE_NAME}
+              SET status = ?
+              WHERE id = ?'''
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql, (new_status, task_id))
+        conn.commit()
+        print(f"⚙️ Обновлена задача ID {task_id}: новый статус '{new_status}'")
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при обновлении: {e}")
+
+def delete_task(conn, task_id):
+    """Удаляет задачу по ID."""
+    sql = f'DELETE FROM {TABLE_NAME} WHERE id=?'
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql, (task_id,))
+        conn.commit()
+        print(f"➖ Удалена задача ID {task_id}.")
+    except sqlite3.Error as e:
+        print(f"❌ Ошибка при удалении: {e}")
 
 # --- Главный запуск программы ---
 
-# Создаем единую, отказоустойчивую сессию
-resilient_session = create_resilient_session()
+print("--- 🗄️ ДЕМОНСТРАЦИЯ РАБОТЫ С SQLite ---")
 
-# --- 1. Демонстрация GET с повторными попытками (если бы сервер ломался) ---
-print("--- 🚀 ОТКАЗОУСТОЙЧИВЫЙ HTTP-КЛИЕНТ ---")
+# 1. Подключение к базе данных (создаст файл, если не существует)
+conn = create_connection(DB_FILE)
 
-posts_data = make_request(resilient_session, "GET", "posts/1")
+if conn:
+    # 2. Создание таблицы
+    create_table(conn)
 
-if posts_data:
-    print(f"✅ Успех: Получен пост ID: {posts_data.get('id')}, Заголовок: {posts_data.get('title')[:30]}...")
-
-# --- 2. Демонстрация POST с кастомными заголовками (Авторизация) ---
-print("\n--- Демонстрация Авторизации и POST ---")
-
-# Имитация токена JWT
-AUTH_TOKEN = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eS5nLnBvdw"
-
-custom_headers = {
-    "Authorization": AUTH_TOKEN,
-    "X-Client-ID": "MyApp-v2.0"
-}
-
-new_resource_payload = {
-    "title": "Новая задача",
-    "completed": False
-}
-
-created_resource = make_request(
-    resilient_session, 
-    "POST", 
-    "todos", 
-    headers=custom_headers, 
-    data=new_resource_payload
-)
-
-if created_resource:
-    print(f"✅ Успех: Создан новый TODO, ID: {created_resource.get('id')}")
-
-# --- 3. Демонстрация PUT (Обновление) ---
-print("\n--- Демонстрация PUT ---")
-
-update_payload = {"title": "Обновленный заголовок", "completed": True}
-updated_resource = make_request(resilient_session, "PUT", "posts/1", data=update_payload)
-
-if updated_resource:
-    print(f"✅ Успех: Пост ID: 1 обновлен. Заголовок: {updated_resource.get('title')}")
-
-# Закрываем сессию
-resilient_session.close()
+    # 3. Вставка данных
+    task_list = [
+        ('Спроектировать API', 1, 'In Progress', str(time.time())),
+        ('Написать Unit-тесты', 2, 'To Do
