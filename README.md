@@ -1,9 +1,3 @@
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-import json
-import time
-
 # --- Настройки ---
 BASE_URL = "https://jsonplaceholder.typicode.com" 
 MAX_RETRIES = 3  # Максимальное количество повторных попыток
