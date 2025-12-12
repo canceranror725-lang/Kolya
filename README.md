@@ -1,97 +1,123 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import json
 import time
 
 # --- Настройки ---
-# Публичный API для тестирования HTTP-запросов
 BASE_URL = "https://jsonplaceholder.typicode.com" 
+MAX_RETRIES = 3  # Максимальное количество повторных попыток
+RETRY_BACKOFF = 1.0 # Время ожидания между повторами (в секундах)
 
-def fetch_data(endpoint):
+# --- 1. Создание отказоустойчивой сессии (Session) ---
+
+def create_resilient_session():
     """
-    Выполняет HTTP GET-запрос для получения данных.
+    Создает объект requests.Session с логикой повторных попыток (Retry Logic).
+    Это обеспечивает, что при временных ошибках (500, 502 и т.д.) клиент
+    автоматически попытается выполнить запрос снова.
+    """
+    # 
+    
+    # Определяем, какие статусы HTTP должны вызывать повторную попытку
+    retry_statuses = [500, 502, 503, 504]
+    
+    retry_strategy = Retry(
+        total=MAX_RETRIES,  # Общее количество попыток
+        backoff_factor=RETRY_BACKOFF, # Фактор экспоненциальной задержки
+        status_forcelist=retry_statuses, # Статусы, при которых нужно повторять
+        method_whitelist=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE"] # Методы для повтора
+    )
+    
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    return session
+
+# --- 2. Универсальная функция запроса ---
+
+def make_request(session, method, endpoint, headers=None, data=None):
+    """
+    Универсальная функция для выполнения HTTP-запросов (GET, POST, PUT, DELETE).
     """
     url = f"{BASE_URL}/{endpoint}"
     
-    print(f"-> 🌐 Выполнение GET-запроса к: {url}")
+    print(f"\n-> 🛠️ {method} Запрос к: {url}")
     
     try:
-        # 
-        response = requests.get(url, timeout=5) # Таймаут 5 секунд
-        response.raise_for_status() # Вызывает исключение для HTTP ошибок 4xx/5xx
+        # Выполнение запроса с использованием объекта Session
+        response = session.request(
+            method,
+            url,
+            json=data,          # Автоматическая сериализация для POST/PUT
+            headers=headers,    # Пользовательские заголовки
+            timeout=10          # Общий таймаут запроса
+        )
+        response.raise_for_status() # Вызывает исключение для ошибок 4xx/5xx
         
-        # Декодируем JSON-ответ в словарь Python
-        data = response.json()
-        
-        print(f"✅ Статус: {response.status_code}")
-        print(f"   Получено {len(data)} элементов.")
-        
-        return data
+        # Обработка ответа
+        if response.status_code == 204: # No Content (типично для DELETE)
+            return {"status": "Success (No Content)"}
+            
+        return response.json()
 
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ HTTP Ошибка (Код {e.response.status_code}): {e}")
     except requests.exceptions.RequestException as e:
-        print(f"❌ ОШИБКА GET-запроса: {e}")
-        return None
-
-def create_resource(endpoint, payload):
-    """
-    Выполняет HTTP POST-запрос для создания нового ресурса.
-    """
-    url = f"{BASE_URL}/{endpoint}"
-    
-    print(f"-> 📦 Выполнение POST-запроса к: {url}")
-    
-    try:
-        # 
-        # Используем json=payload, чтобы автоматически сериализовать данные и установить Content-Type: application/json
-        response = requests.post(url, json=payload, timeout=5) 
-        response.raise_for_status() # Вызывает исключение для HTTP ошибок 4xx/5xx
+        print(f"❌ Сетевая Ошибка/Таймаут: {e}")
         
-        # Декодируем JSON-ответ
-        data = response.json()
-        
-        print(f"✅ Статус: {response.status_code}")
-        print(f"   Новый ID ресурса: {data.get('id')}")
-        
-        return data
-
-    except requests.exceptions.RequestException as e:
-        print(f"❌ ОШИБКА POST-запроса: {e}")
-        return None
+    return None
 
 # --- Главный запуск программы ---
 
-print("--- 🌐 ИНСТРУМЕНТ ДЛЯ HTTP-ЗАПРОСОВ (Requests) ---")
+# Создаем единую, отказоустойчивую сессию
+resilient_session = create_resilient_session()
 
-# --- 1. Демонстрация GET-запроса (Получение списка постов) ---
-print("\n[1. ПОЛУЧЕНИЕ ДАННЫХ (GET)]")
+# --- 1. Демонстрация GET с повторными попытками (если бы сервер ломался) ---
+print("--- 🚀 ОТКАЗОУСТОЙЧИВЫЙ HTTP-КЛИЕНТ ---")
 
-posts = fetch_data("posts")
+posts_data = make_request(resilient_session, "GET", "posts/1")
 
-if posts:
-    # Выводим информацию о первом посте
-    first_post_title = posts[0].get('title', 'N/A')
-    print(f"   Первый пост: '{first_post_title[:40]}...'")
+if posts_data:
+    print(f"✅ Успех: Получен пост ID: {posts_data.get('id')}, Заголовок: {posts_data.get('title')[:30]}...")
 
+# --- 2. Демонстрация POST с кастомными заголовками (Авторизация) ---
+print("\n--- Демонстрация Авторизации и POST ---")
 
-# --- 2. Демонстрация POST-запроса (Создание нового поста) ---
-print("\n[2. ОТПРАВКА ДАННЫХ (POST)]")
+# Имитация токена JWT
+AUTH_TOKEN = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eS5nLnBvdw"
 
-new_post_payload = {
-    "title": "Новый пост от API клиента",
-    "body": "Это тело поста, созданного в {time.ctime()}",
-    "userId": 99
+custom_headers = {
+    "Authorization": AUTH_TOKEN,
+    "X-Client-ID": "MyApp-v2.0"
 }
 
-created_post = create_resource("posts", new_post_payload)
+new_resource_payload = {
+    "title": "Новая задача",
+    "completed": False
+}
 
-if created_post:
-    print(f"   Подтвержденный заголовок: '{created_post.get('title')}'")
-    # Обратите внимание, что fake API вернет ID=101, имитируя создание ресурса
+created_resource = make_request(
+    resilient_session, 
+    "POST", 
+    "todos", 
+    headers=custom_headers, 
+    data=new_resource_payload
+)
 
+if created_resource:
+    print(f"✅ Успех: Создан новый TODO, ID: {created_resource.get('id')}")
 
-# --- 3. Демонстрация обработки ошибок (GET-запрос к несуществующему ресурсу) ---
-print("\n[3. ОБРАБОТКА ОШИБОК]")
+# --- 3. Демонстрация PUT (Обновление) ---
+print("\n--- Демонстрация PUT ---")
 
-error_data = fetch_data("non_existent_endpoint") # Ожидаем 404 Not Found
+update_payload = {"title": "Обновленный заголовок", "completed": True}
+updated_resource = make_request(resilient_session, "PUT", "posts/1", data=update_payload)
 
-if error_data is None:
-    print("   Как ожидалось, запрос завершился с ошибкой (например, 404).")
+if updated_resource:
+    print(f"✅ Успех: Пост ID: 1 обновлен. Заголовок: {updated_resource.get('title')}")
+
+# Закрываем сессию
+resilient_session.close()
