@@ -1,0 +1,79 @@
+import unittest
+
+# --- Модуль, который мы тестируем (например, calculator.py) ---
+
+def safe_divide(a, b):
+    """
+    Безопасно делит два числа. Возвращает None в случае деления на ноль.
+    """
+    if b == 0:
+        return None
+    return a / b
+
+def multiply(a, b):
+    """
+    Умножает два числа.
+    """
+    return a * b
+
+def is_valid_name(name):
+    """
+    Проверяет, является ли имя валидным (строка, не пустая, только буквы).
+    """
+    if not isinstance(name, str) or not name.strip():
+        return False
+    # Проверяем, что строка содержит только буквы и пробелы
+    return name.replace(' ', '').isalpha()
+
+# --- Тестовый класс (например, test_calculator.py) ---
+
+class TestCalculatorFunctions(unittest.TestCase):
+    """
+    Набор тестов для функций safe_divide, multiply и is_valid_name.
+    """
+
+    # --- 1. Настройка и очистка (Setup & Teardown) ---
+    # Эти методы вызываются перед/после КАЖДОГО теста, а не всего класса
+    
+    def setUp(self):
+        """Выполняется перед запуском каждого тестового метода."""
+        # Можно инициализировать временные объекты или подключения к БД здесь
+        self.test_value = 10 
+        # print(f"\n[SETUP] Установлено начальное значение: {self.test_value}")
+
+    def tearDown(self):
+        """Выполняется после завершения каждого тестового метода."""
+        # Очистка временных файлов или закрытие подключений
+        # print("[TEARDOWN] Тест завершен.")
+        pass
+    
+    # --- 2. Тесты для safe_divide ---
+    
+    def test_division_success(self):
+        """Тестирует успешное деление целых чисел."""
+        result = safe_divide(10, 2)
+        # Утверждение: результат должен быть равен 5
+        self.assertEqual(result, 5)
+
+    def test_division_by_zero(self):
+        """Тестирует случай деления на ноль (ожидаем None)."""
+        result = safe_divide(self.test_value, 0)
+        # Утверждение: результат должен быть None
+        self.assertIsNone(result)
+
+    def test_division_float(self):
+        """Тестирует деление с плавающей точкой."""
+        result = safe_divide(10, 3)
+        # Утверждение: проверяем приблизительное равенство
+        self.assertAlmostEqual(result, 3.333333, places=6)
+
+    # --- 3. Тесты для multiply ---
+    
+    def test_multiply_positive(self):
+        """Тестирует умножение двух положительных чисел."""
+        self.assertEqual(multiply(5, 4), 20)
+
+    def test_multiply_negative(self):
+        """Тестирует умножение с отрицательными числами."""
+        self.assertEqual(multiply(-5, 5), -25)
+        self.assertEqual(multiply(-5, -5), 25)
